@@ -83,7 +83,7 @@ Output the coordinate pair exactly:
 '''
 SYSTEM_PROMPT = SYSTEM_PROMPT.strip()
 
-class LazySupervisedDataset(Dataset):
+class LazySupervisedDataset(Dataset):#懒加载多模态数据集
     def __init__(self, data_path: str, script_args: GRPOScriptArguments, processing_class:None):
         super(LazySupervisedDataset, self).__init__()
         self.script_args = script_args
@@ -101,7 +101,7 @@ class LazySupervisedDataset(Dataset):
     def __len__(self):
         return len(self.list_data_dict)
 
-    def __getitem__(self, i):
+    def __getitem__(self, i):#加载 JSON/JSONL 格式的多模态数据集（图片 + 文本 + 标注框），预处理图片（智能缩放）、构造训练 Prompt，返回模型训练所需的结构化数据；
         def make_conversation_image(example, height,width):
             instruction = example['conversations'][0]['value']
             instruction = instruction.replace("<image>","")
@@ -207,13 +207,13 @@ def main(script_args, training_args, model_args):
     print(training_args)
     print(model_args)
 
-    reward_funcs = [reward_funcs_registry[func] for func in script_args.reward_funcs]
+    reward_funcs = [reward_funcs_registry[func] for func in script_args.reward_funcs]#点击奖励和格式奖励
     print("reward_funcs:", reward_funcs)
 
     processing_class = AutoProcessor.from_pretrained(model_args.model_name_or_path,  max_pixels=script_args.max_pixels, min_pixels=script_args.min_pixels)
     # Load the dataset
     dataset = LazySupervisedDataset(script_args.dataset_name, script_args, processing_class)
-    trainer_cls = Qwen2VLGRPOTrainer
+    trainer_cls = Qwen2VLGRPOTrainer#专门对Qwen设计的GRPO训练器
 
     apply_liger_kernel_to_qwen2_5_vl(fused_linear_cross_entropy=False)
 
@@ -246,5 +246,5 @@ def main(script_args, training_args, model_args):
 
 if __name__ == "__main__":
     parser = TrlParser((GRPOScriptArguments, GRPOConfig, GRPOModelConfig))
-    script_args, training_args, model_args = parser.parse_args_and_config()
+    script_args, training_args, model_args = parser.parse_args_and_config()#读取运行脚本时输入的参数，生成上述三个解析器的实例
     main(script_args, training_args, model_args)

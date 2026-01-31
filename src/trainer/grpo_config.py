@@ -129,9 +129,10 @@ class GRPOConfig(TrainingArguments):
         },
     )
 
-    # Parameters that control the data preprocessing
+    # Parameters that control the data preprocessing，控制数据预处理的参数
     # The default value remove_unused_columns is overwritten from the parent class, because in GRPO we usually rely on
     # additional columns to compute the reward
+    #是否仅仅保持提示词这一列，因为GRPO要用奖励函数所以保持为False
     remove_unused_columns: Optional[bool] = field(
         default=False,
         metadata={
@@ -139,12 +140,14 @@ class GRPOConfig(TrainingArguments):
             "that requires any column other than 'prompts' and 'completions', you should keep this to `False`."
         },
     )
+    ##最大提示词长度
     max_prompt_length: Optional[int] = field(
         default=512,
         metadata={
             "help": "Maximum length of the prompt. If the prompt is longer than this value, it will be truncated left."
         },
     )
+    #每次提示所要生成的代数数量。全局批处理大小（`num_processes` * `per_device_batch_size`）必须能被此值整除。
     num_generations: Optional[int] = field(
         default=8,
         metadata={
@@ -152,14 +155,17 @@ class GRPOConfig(TrainingArguments):
             "must be divisible by this value."
         },
     )
+    #温度
     temperature: Optional[float] = field(
         default=0.9,
         metadata={"help": "Temperature for sampling. The higher the temperature, the more random the completions."},
     )
+    #生成的最大长度
     max_completion_length: Optional[int] = field(
         default=256,
         metadata={"help": "Maximum length of the generated completion."},
     )
+    #使用DeepSeed ZeRO-3，禁用该功能就不能vLLM生成
     ds3_gather_for_generation: bool = field(
         default=True,
         metadata={
@@ -170,7 +176,7 @@ class GRPOConfig(TrainingArguments):
         },
     )
 
-    # Parameters that control generation acceleration powered by vLLM
+    # Parameters that control generation acceleration powered by vLLM，是否使用vLLM
     use_vllm: Optional[bool] = field(
         default=False,
         metadata={
@@ -187,6 +193,7 @@ class GRPOConfig(TrainingArguments):
             "that training has not already occupied all available GPUs."
         },
     )
+    #vLLM最大占用
     vllm_gpu_memory_utilization: float = field(
         default=0.9,
         metadata={
@@ -203,6 +210,7 @@ class GRPOConfig(TrainingArguments):
             "determined based on the model configuration. Find the supported values in the vLLM documentation."
         },
     )
+    #vLLM的最大输出长度，如果单独设置，则以这个为准
     vllm_max_model_len: Optional[int] = field(
         default=None,
         metadata={
@@ -211,6 +219,8 @@ class GRPOConfig(TrainingArguments):
             "context size, which might be much larger than the KV cache, leading to inefficiencies."
         },
     )
+    #vLLM的prefix caching，大语言模型（LLM）推理中用于复用共享前缀的 KV Cache、避免重复计算的核心优化技术，能显著降低首 token 延迟（TTFT）、提升吞吐量，
+    # 在多轮对话、RAG、批量推理等场景效果显著。它与单请求 KV Cache 不同，支持跨会话复用，是生产环境提升 LLM 服务效率的关键手段之一。
     vllm_enable_prefix_caching: Optional[bool] = field(
         default=True,
         metadata={
@@ -231,6 +241,7 @@ class GRPOConfig(TrainingArguments):
             "`transformers.TrainingArguments`."
         },
     )
+    #KL散度权重
     beta: float = field(
         default=0.04,
         metadata={
@@ -242,6 +253,7 @@ class GRPOConfig(TrainingArguments):
         default=1,
         metadata={"help": "Number of iterations per batch (denoted as μ in the algorithm)."},
     )
+    #裁剪梯度的最大范数
     epsilon: float = field(
         default=0.2,
         metadata={"help": "Epsilon value for clipping."},
@@ -254,6 +266,7 @@ class GRPOConfig(TrainingArguments):
         default=0.28,
         metadata={"help": "Epsilon value for clipping."},
     )
+    #奖励函数的权重，如果多个奖励函数就要设置，否则权重都为1
     reward_weights: Optional[list[float]] = field(
         default=None,
         metadata={
@@ -261,6 +274,7 @@ class GRPOConfig(TrainingArguments):
             "rewards are weighted equally with weight `1.0`."
         },
     )
+    #是否每隔 `ref_model_sync_steps` 步次（其中 `ref_model_mixup_alpha` 是一个参数）就将参考模型与当前模型进行同步。
     sync_ref_model: bool = field(
         default=False,
         metadata={
@@ -268,6 +282,7 @@ class GRPOConfig(TrainingArguments):
             "steps, using the `ref_model_mixup_alpha` parameter."
         },
     )
+    #控制在更新过程中当前策略与先前参考策略之间的混合比例
     ref_model_mixup_alpha: float = field(
         default=0.6,
         metadata={
@@ -284,7 +299,7 @@ class GRPOConfig(TrainingArguments):
         },
     )
 
-    # Parameters that control the logging
+    # Parameters that control the logging“帮助”：是否每隔 `logging_steps` 步次记录一组（提示、完成）对的样本。如果已安装“rich”库，则会打印该样本。如果启用了“wandb”记录功能，则会将该样本记录到“wandb”中。
     log_completions: bool = field(
         default=False,
         metadata={

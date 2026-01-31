@@ -61,11 +61,11 @@ if is_wandb_available():
 import numpy as np
 # What we call a reward function is a callable that takes a list of prompts and completions and returns a list of
 # rewards. When it's a string, it's a model ID, so it's loaded as a pretrained model.
-RewardFunc = Union[str, PreTrainedModel, Callable[[list, list], list[float]]]
+RewardFunc = Union[str, PreTrainedModel, Callable[[list, list], list[float]]]#click_reward符合第三个类型，Union代表属于这三个类别中的一个
 
-class RepeatRandomSampler(Sampler):
+class RepeatRandomSampler(Sampler):#核心功能是以 “批次内重复 + 整体重复” 的结构化方式随机采样数据集索引，解决普通随机采样无法控制 “单样本重复次数” 的问题
     """
-    Sampler that repeats the indices of a dataset in a structured manner.
+    Sampler that repeats the indices of a dataset in a structured manner.   以结构化方式重复数据集索引的采样器。
 
     Args:
         data_source (`Sized`):
@@ -91,7 +91,7 @@ class RepeatRandomSampler(Sampler):
         self.data_source = data_source
         self.mini_repeat_count = mini_repeat_count
         self.batch_size = batch_size
-        self.repeat_count = repeat_count
+        self.repeat_count = repeat_count##批次重复次数
         self.num_samples = len(data_source)
         self.seed = seed
         self.generator = torch.Generator()
@@ -99,15 +99,18 @@ class RepeatRandomSampler(Sampler):
             self.generator.manual_seed(seed)
 
     def __iter__(self):
+        ## 步骤1：随机打乱所有索引（生成0~num_samples-1的随机排列）
         indexes = torch.randperm(self.num_samples, generator=self.generator).tolist()
+        #根据batch_size划分
         indexes = [indexes[i : i + self.batch_size] for i in range(0, len(indexes), self.batch_size)]
+        #只保留长度等于batch_size的批次
         indexes = [chunk for chunk in indexes if len(chunk) == self.batch_size]
 
-        for chunk in indexes:
-            for _ in range(self.repeat_count):
-                for index in chunk:
-                    for _ in range(self.mini_repeat_count):
-                        yield index
+        for chunk in indexes:# 遍历每个批次，如 chunk=[3,1]
+            for _ in range(self.repeat_count):# 批次整体重复repeat_count次（示例：1次）
+                for index in chunk:# 遍历批次内的每个唯一索引，如 3 → 1
+                    for _ in range(self.mini_repeat_count):# 单索引重复mini_repeat_count次（示例：2次）
+                        yield index# 生成最终索引
 
     def __len__(self) -> int:
         return self.num_samples * self.mini_repeat_count * self.repeat_count
@@ -217,23 +220,25 @@ class Qwen2VLGRPOTrainer(Trainer):
     ):
         # Args
         if args is None:
-            model_name = model if isinstance(model, str) else model.config._name_or_path
-            model_name = model_name.split("/")[-1]
+            model_name = model if isinstance(model, str) else model.config._name_or_path#判断是否为str，不是的话是preTrainedMOdell
+            model_name = model_name.split("/")[-1]##分析得到名称
             args = GRPOConfig(f"{model_name}-GRPO")
 
         # Models
         # Trained model
         model_init_kwargs = args.model_init_kwargs or {}
         model_init_kwargs["attn_implementation"] = attn_implementation
-        if model_init_kwargs.get("torch_dtype") is None:
+        if model_init_kwargs.get("torch_dtype") is None:#设置torch.dtype
             model_init_kwargs["torch_dtype"] = torch_dtype
+        
+        #设置model_id并且检查torch.torch_dtype是不是正确的格式
         if isinstance(model, str):
             model_id = model
             torch_dtype = model_init_kwargs.get("torch_dtype")
             if isinstance(torch_dtype, torch.dtype) or torch_dtype == "auto" or torch_dtype is None:
                 pass  # torch_dtype is already a torch.dtype or "auto" or None
-            elif isinstance(torch_dtype, str):  # it's a str, but not "auto"
-                torch_dtype = getattr(torch, torch_dtype)
+            elif isinstance(torch_dtype, str):  # it's a str, but not "auto"     
+                torch_dtype = getattr(torch, torch_dtype)##"bfloat16"转为torch.bfloat16	
                 model_init_kwargs["torch_dtype"] = torch_dtype
             else:
                 raise ValueError(
@@ -252,7 +257,7 @@ class Qwen2VLGRPOTrainer(Trainer):
 
         self.vision_modules_keywords = ["visual"]
         if peft_config is not None:
-            def find_all_linear_names(model, num_lora_modules=-1, lora_namespan_exclude=[]):
+            def find_all_linear_names(model, num_lora_modules=-1, lora_namespan_exclude=[]):#自动筛选 LoRA 目标模块，排除视觉模块和嵌入层，仅训练语言部分的线性层
                 linear_cls = torch.nn.modules.Linear
                 embedding_cls = torch.nn.modules.Embedding
                 lora_module_names = []
@@ -268,9 +273,9 @@ class Qwen2VLGRPOTrainer(Trainer):
                 return lora_module_names
             target_modules = find_all_linear_names(model, lora_namespan_exclude=['visual', 'embed_tokens'])
             peft_config.target_modules = target_modules
-            model = get_peft_model(model, peft_config)
+            model = get_peft_model(model, peft_config)## 用PEFT包装模型，仅对target_modules添加LoRA适配器
 
-        if freeze_vision_modules:
+        if freeze_vision_modules:#禁止视觉参数更新
             print("Freezing vision modules...")
             for n, p in model.named_parameters():
                 if any(keyword in n for keyword in self.vision_modules_keywords):
@@ -278,16 +283,16 @@ class Qwen2VLGRPOTrainer(Trainer):
 
         # Enable gradient checkpointing if requested
         if args.gradient_checkpointing:
-            model = self._enable_gradient_checkpointing(model, args)
+            model = self._enable_gradient_checkpointing(model, args)# 若配置中开启梯度检查点，则启用
 
         # Reference model
         if args.beta > 0:
-            if is_deepspeed_zero3_enabled():
+            if is_deepspeed_zero3_enabled():#直接从 model_id 重新加载一个全新的 Qwen2_5_VLForConditionalGeneration 模型作为参考模型 —— 因为 Zero3 会重写模型参数的存储方式，create_reference_model（浅拷贝 / 深拷贝）会失效，必须独立加载；
                 self.ref_model = Qwen2_5_VLForConditionalGeneration.from_pretrained(model_id, **model_init_kwargs)
-            elif peft_config is None:
+            elif peft_config is None:#未启用 PEFT高效微调算法 （全参数微调）
                 # If PEFT configuration is not provided, create a reference model based on the initial model.
                 self.ref_model = create_reference_model(model)
-            else:
+            else:#PEFT 场景下无需独立参考模型—— 因为 PEFT 是在原始模型上添加 “低秩适配器”，禁用适配器（model.disable_adapter()）即可瞬间恢复到预训练的原始模型（等价于参考模型）；
                 # If PEFT is used, the reference model is not needed since the adapter can be disabled
                 # to revert to the initial model.
                 self.ref_model = None
@@ -295,20 +300,22 @@ class Qwen2VLGRPOTrainer(Trainer):
             self.ref_model = None
 
         # Processing class
-        if processing_class is None:
+        if processing_class is None:# 兜底逻辑：用户未传入处理器时自动初始化
 
             processing_class = AutoProcessor.from_pretrained(model_id)
+            #Qwen2VL 的 AutoProcessor 本身不会默认继承 tokenizer 的 pad_token_id/eos_token_id，但训练过程中需要处理器能直接访问这些关键 ID（如生成时判断结束、批次补齐时用统一的 pad token）；
             pad_token_id = processing_class.tokenizer.pad_token_id
             processing_class.pad_token_id = pad_token_id
             processing_class.eos_token_id = processing_class.tokenizer.eos_token_id
+
             processing_class.image_processor.max_pixels = max_pixels
             processing_class.image_processor.min_pixels = min_pixels
 
         # Reward functions
-        if not isinstance(reward_funcs, list):
+        if not isinstance(reward_funcs, list):#非列表就创建列表
             reward_funcs = [reward_funcs]
         for i, reward_func in enumerate(reward_funcs):
-            if isinstance(reward_func, str):
+            if isinstance(reward_func, str):# 加载为序列分类模型（num_labels=1 表示输出单个奖励分数）
                 reward_funcs[i] = AutoModelForSequenceClassification.from_pretrained(
                     reward_func, num_labels=1, **model_init_kwargs
                 )
@@ -325,9 +332,9 @@ class Qwen2VLGRPOTrainer(Trainer):
 
         for i, (reward_processing_class, reward_func) in enumerate(zip(reward_processing_classes, reward_funcs)):
             if isinstance(reward_func, PreTrainedModel):
-                if reward_processing_class is None:
+                if reward_processing_class is None:# 未指定处理器，自动加载
                     reward_processing_class = AutoTokenizer.from_pretrained(reward_func.config._name_or_path)
-                if reward_processing_class.pad_token_id is None:
+                if reward_processing_class.pad_token_id is None:# 处理器无pad_token_id时，将eos_token设为pad_token（奖励模型必需）
                     reward_processing_class.pad_token = reward_processing_class.eos_token
                 # The reward model computes the reward for the latest non-padded token in the input sequence.
                 # So it's important to set the pad token ID to the padding token ID of the processing class.
@@ -386,16 +393,16 @@ class Qwen2VLGRPOTrainer(Trainer):
         )
 
         # Check if the per_device_train/eval_batch_size * num processes can be divided by the number of generations
-        num_processes = self.accelerator.num_processes
-        global_batch_size = args.per_device_train_batch_size * num_processes
-        possible_values = [n_gen for n_gen in range(2, global_batch_size + 1) if (global_batch_size) % n_gen == 0]
+        num_processes = self.accelerator.num_processes # 分布式进程数（多卡训练时为卡数）
+        global_batch_size = args.per_device_train_batch_size * num_processes # 全局批次大小（所有卡的总批次）
+        possible_values = [n_gen for n_gen in range(2, global_batch_size + 1) if (global_batch_size) % n_gen == 0]  # 计算全局批次能整除的生成数候选值（≥2，因为GRPO需要至少2个候选对比）
         if self.num_generations not in possible_values:
             raise ValueError(
                 f"The global train batch size ({num_processes} x {args.per_device_train_batch_size}) must be evenly "
                 f"divisible by the number of generations per prompt ({self.num_generations}). Given the current train "
                 f"batch size, the valid values for the number of generations are: {possible_values}."
             )
-        if self.args.eval_strategy != "no":
+        if self.args.eval_strategy != "no":# 评估批次校验（若开启评估）
             global_batch_size = args.per_device_eval_batch_size * num_processes
             possible_values = [n_gen for n_gen in range(2, global_batch_size + 1) if (global_batch_size) % n_gen == 0]
             if self.num_generations not in possible_values:
@@ -408,14 +415,14 @@ class Qwen2VLGRPOTrainer(Trainer):
         # Ensure each process receives a unique seed to prevent duplicate completions when generating with
         # transformers if num_generations exceeds per_device_train_batch_size. We could skip it if we use vLLM, but
         # it's safer to set it in all cases.
-        set_seed(args.seed, device_specific=True)
+        set_seed(args.seed, device_specific=True)#分布式训练时，每个进程（每张卡）生成一个设备专属的随机种子，避免不同进程生成完全相同的候选输出
 
         # Gradient accumulation requires scaled loss. Normally, loss scaling in the parent class depends on whether the
         # model accepts loss-related kwargs. Since we compute our own loss, this check is irrelevant. We set
         # self.model_accepts_loss_kwargs to False to enable scaling.
-        self.model_accepts_loss_kwargs = False
+        self.model_accepts_loss_kwargs = False#开启损失缩放，GRPO 的损失不是模型内置的，而是自定义计算的，如果不手动改，Trainer 会误以为 “模型自己处理损失”，关闭自动损失缩放，导致混合精度训练时梯度下溢，模型训不动。
 
-        if self.ref_model is not None:
+        if self.ref_model is not None:# 奖励模型的分布式适配
             if self.is_deepspeed_enabled:
                 self.ref_model = prepare_deepspeed(self.ref_model, self.accelerator)
             else:
@@ -458,16 +465,18 @@ class Qwen2VLGRPOTrainer(Trainer):
 
     # Get the per-token log probabilities for the completions for the model and the reference model
     def _get_per_token_logps(self, model, input_ids, attention_mask, pixel_values, image_grid_thw):
-        logits = model(input_ids, attention_mask=attention_mask, pixel_values=pixel_values, image_grid_thw=image_grid_thw).logits  # (B, L, V)
-        logits = logits[:, :-1, :]  # (B, L-1, V), exclude the last logit: it corresponds to the next token pred
-        input_ids = input_ids[:, 1:]  # (B, L-1), exclude the first input ID since we don't have logits for it
+        logits = model(input_ids, attention_mask=attention_mask, pixel_values=pixel_values, image_grid_thw=image_grid_thw).logits  # (B, L, V)  # 1. 前向传播获取模型logits（B=批次, L=序列长度, V=词表大小）
+        logits = logits[:, :-1, :]  # (B, L-1, V), exclude the last logit: it corresponds to the next token pred  2. 截断最后一个logit（因为最后一个logit预测下一个token，无对应输入token）
+        input_ids = input_ids[:, 1:]  # (B, L-1), exclude the first input ID since we don't have logits for it # 3. 截断第一个input_id（因为第一个token无对应的logit）
         # Compute the log probabilities for the input tokens. Use a loop to reduce memory peak.
         per_token_logps = []
-        for logits_row, input_ids_row in zip(logits, input_ids):
-            log_probs = logits_row.log_softmax(dim=-1)
+        for logits_row, input_ids_row in zip(logits, input_ids):    # 4. 逐行计算token对数概率
+            log_probs = logits_row.log_softmax(dim=-1)##(L-1,V)# 对最后一维做softmax+log，得到每个token的对数概率(L-1,V)
+            ## 取出input_ids对应的token的对数概率（核心：gather按索引取值）
+            #input_ids_row为(L-1),升维到(L-1,1)，input_ids_row是每个Batch中输入token对应V中的序号，所以从结果log_probs（L-1,V）中找到对应token中V的对数概率
             token_log_prob = torch.gather(log_probs, dim=1, index=input_ids_row.unsqueeze(1)).squeeze(1)
             per_token_logps.append(token_log_prob)
-        return torch.stack(per_token_logps)
+        return torch.stack(per_token_logps)#(B,L-1)
 
 
     def _prepare_inputs(self, inputs):
@@ -477,20 +486,20 @@ class Qwen2VLGRPOTrainer(Trainer):
     def _generate_and_score_completions(self, inputs: dict[str, Union[torch.Tensor, Any]], model) -> dict[str, Union[torch.Tensor, Any]]:
         device = self.accelerator.device
         prompts = [x["prompt"] for x in inputs]
-        prompts_text = [maybe_apply_chat_template(example, self.processing_class)["prompt"] for example in inputs]
+        prompts_text = [maybe_apply_chat_template(example, self.processing_class)["prompt"] for example in inputs]#适配 Qwen2VL 的对话格式
         
         # Handle both pre-loaded images and image paths
         images = []
         for x in inputs:
             images.extend(x["image"])
             
-        if len(images) > 0:
+        if len(images) > 0:# 多模态处理器编码（文本+图片）
             prompt_inputs = self.processing_class(
                 text=prompts_text,
                 images=images,
                 return_tensors="pt",
                 padding=True,
-                padding_side="left",
+                padding_side="left", # Qwen2VL必须左补齐
                 add_special_tokens=False,
             )
         else:
@@ -511,25 +520,35 @@ class Qwen2VLGRPOTrainer(Trainer):
             pixel_values = None
             image_grid_thw = None
 
-        
+        #这是分布式训练必备操作（适配单卡 / 多卡 / DeepSpeed Zero3），在 GRPO/PPO 训练中，模型会被accelerator/deepspeed封装一层用于分布式训练，封装后的模型无法直接调用.generate()生成。
+        #这个上下文管理器的作用：临时解包模型，让生成功能生效；生成结束后自动还原封装状态，不影响后续训练。
         with unwrap_model_for_generation(model, self.accelerator,gather_deepspeed3_params=self.args.ds3_gather_for_generation) as unwrapped_model:
             
             prompt_completion_ids = unwrapped_model.generate(
                 **prompt_inputs, 
                 generation_config=self.generation_config,
-                bad_words_ids=[[unwrapped_model.config.image_token_id]],
+                bad_words_ids=[[unwrapped_model.config.image_token_id]],#禁止模型生成图片 token
             )
-
+            #拆分 prompt 和生成内容
             prompt_length = prompt_ids.size(1)
             prompt_ids = prompt_completion_ids[:, :prompt_length]
             completion_ids = prompt_completion_ids[:, prompt_length:]
             
         # Mask everything after the first EOS token
-        is_eos = completion_ids == self.processing_class.eos_token_id
-        eos_idx = torch.full((is_eos.size(0),), is_eos.size(1), dtype=torch.long, device=device)
+        #模型生成的completion_ids有两个问题：生成内容到EOS_TOKEN（结束符，如<|im_end|>）就代表回答完成了，EOS 之后的所有 token 都是无效的 padding 内容；
+        #不同样本的生成长度不一致，需要一个mask标记「哪些 token 是有效生成内容」，后续计算概率 / 损失时，只计算有效 token，无效 token 不计入。
+
+        is_eos = completion_ids == self.processing_class.eos_token_id#生成一个和completion_ids同形状的布尔张量，值为True的位置就是 EOS token 的位置
+
+        eos_idx = torch.full((is_eos.size(0),), is_eos.size(1), dtype=torch.long, device=device)#初始化一个长度为B的张量，默认值设为is_eos.size(1)，如果某个样本没有生成 EOS token，就认为它的所有生成内容都是有效的，掩码到最后一位。
+
+        #is_eos.any(dim=1)筛选出「生成了 EOS token 的样本」，is_eos.int().argmax(dim=1)对每个样本，找到第一个 EOS token 的列索引
+        #[B,]得到一个长度为B的张量，每个元素代表着第一个EOS的位置，或者没有EOS
         eos_idx[is_eos.any(dim=1)] = is_eos.int().argmax(dim=1)[is_eos.any(dim=1)]
-        sequence_indices = torch.arange(is_eos.size(1), device=device).expand(is_eos.size(0), -1)
-        completion_mask = (sequence_indices <= eos_idx.unsqueeze(1)).int()
+
+        sequence_indices = torch.arange(is_eos.size(1), device=device).expand(is_eos.size(0), -1)#生成一个从0到C-1的序列，再扩展成[B, C]的形状，相当于给每个样本的生成内容做「位置编号」。
+        completion_mask = (sequence_indices <= eos_idx.unsqueeze(1)).int()#eos_idx.unsqueeze(1)：把[B,]的张量变成[B,1]。位置编号 ≤ EOS 位置 → 有效 token（值为 1），否则无效（值为 0）。
+
 
         # Concatenate prompt_mask with completion_mask for logit computation
         attention_mask = torch.cat([prompt_mask, completion_mask], dim=1)  # (B, P+C)
@@ -540,6 +559,7 @@ class Qwen2VLGRPOTrainer(Trainer):
             
             pixel_values = None
             image_grid_thw = None
+            
         with torch.no_grad():
             # When using num_iterations == 1, old_per_token_logps == per_token_logps, so we can skip its
             # computation here, and use per_token_logps.detach() instead.

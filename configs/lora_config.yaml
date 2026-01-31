@@ -1,0 +1,75 @@
+# GTA1 LoRA训练配置文件
+
+# 模型相关参数
+model_name_or_path: Qwen/Qwen2.5-VL-3B-Instruct
+model_revision: main
+torch_dtype: bfloat16
+
+# LoRA配置
+peft_config:
+  peft_type: lora
+  r: 16
+  lora_alpha: 32
+  lora_dropout: 0.05
+  bias: none
+  task_type: CAUSAL_LM
+  target_modules:
+    - q_proj
+    - k_proj
+    - v_proj
+    - o_proj
+    - gate_proj
+    - up_proj
+    - down_proj
+
+# 数据集参数
+dataset_name: preprocessing/inp.json
+image_root: ./preprocessing
+
+# GRPO训练参数
+max_prompt_length: 1024
+max_completion_length: 128
+num_generations: 8
+
+# 训练参数
+learning_rate: 1e-5
+num_train_epochs: 3
+per_device_train_batch_size: 1
+per_device_eval_batch_size: 1
+gradient_accumulation_steps: 8
+max_pixels: 8847360  # 2880*1920/2
+min_pixels: 3136
+
+# 输出目录
+output_dir: ./output/gta1_lora
+
+# 奖励函数
+reward_funcs:
+  - accuracy
+  - format
+
+# WandB配置
+report_to: wandb
+
+# WandB API Key (也可以通过环境变量设置)
+wandb_api_key: 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
+
+# WandB项目配置
+wandb_project: gta1-lora-training
+wandb_entity: null  # 设置为你的WandB用户名/团队名
+wandb_run_name: gta1-lora
+
+# 其他设置
+freeze_vision_modules: true
+bf16: true
+logging_steps: 5
+save_strategy: epoch
+eval_strategy: no
+dataloader_num_workers: 2
+
+# DeepSpeed配置 (可选，用于大模型训练)
+# deepspeed: local_scripts/zero3.json
+
+# 种子
+seed: 42
+data_seed: 42
